@@ -1,0 +1,74 @@
+version: "3.9"
+
+# Orchestra Framework — single-machine Docker Compose
+# Usage:
+#   cp .env.example .env && edit .env
+#   docker compose up conductor
+
+services:
+  # -----------------------------------------------------------------------
+  # Conductor — autonomous research loop
+  # Runs on host Python (not containerized) for simplicity.
+  # To containerize the Conductor itself, use docker/Dockerfile.conductor.
+  # -----------------------------------------------------------------------
+
+  # -----------------------------------------------------------------------
+  # Ollama — local embedding service for memory
+  # -----------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: orchestra-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_ORIGINS=*
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -----------------------------------------------------------------------
+  # Musician — training container (launched per-iteration by Conductor)
+  # This service definition is used as a template; the Conductor launches
+  # individual musician containers via docker-py, not docker compose.
+  # -----------------------------------------------------------------------
+  musician:
+    image: orchestra-musician:latest
+    container_name: orchestra-musician-template
+    profiles:
+      - manual  # Only start manually for testing
+    volumes:
+      - type: bind
+        source: ${WORKSPACE_DIR:-~/.orchestra/workspace}
+        target: /workspace
+      - type: bind
+        source: ${DATASETS_DIR:-~/.orchestra/datasets}
+        target: /datasets
+        read_only: true
+    environment:
+      - ITERATION=${ITERATION:-0}
+      - HYPOTHESIS_SHA=${HYPOTHESIS_SHA:-HEAD}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    working_dir: /workspace
+    command: ["python3", "train.py"]
+
+volumes:
+  ollama_models:
+    driver: local

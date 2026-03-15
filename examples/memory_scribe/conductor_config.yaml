@@ -1,0 +1,54 @@
+# Orchestra Conductor Configuration
+# Session: memory_scribe_v1
+# Copy this file to your workspace and fill in <REQUIRED> values.
+
+session:
+  name: "memory_scribe_v1"
+  dataset_id: "memory_scribe_v1"
+  workspace_dir: "~/.orchestra/workspace/memory_scribe_v1"
+  branch: "session/memory_scribe_v1"
+  max_iterations: 50
+  target_metric: "val_loss"
+  target_value: 2.50
+  keep_threshold: -0.005        # Keep if delta <= -0.005 (must improve by at least 0.005)
+
+llm:
+  provider: "openrouter"
+  model: "anthropic/claude-3-7-sonnet-20250219"
+  api_key_env: "OPENROUTER_API_KEY"   # Set this in your .env file
+  max_tokens: 4096
+  temperature: 0.3
+  context_budget_tokens: 8000
+
+runner:
+  type: "docker"                       # Change to "k8s" for cluster deployment
+  image: "orchestra-musician:latest"   # Build with: docker build -t orchestra-musician .
+  gpu_device: "0"                      # RTX 4060 is device 0
+  timeout_seconds: 2700                # 45 minutes
+
+  # K8s-specific settings (uncomment if type: k8s)
+  # namespace: "orchestra"
+  # node_selector:
+  #   orchestra/gpu: "rtx4060"
+  # k8s_job_ttl_seconds: 600
+
+memory:
+  embedding_model: "nomic-embed-text"
+  embedding_url: "http://localhost:11434"   # Ollama on Framework machine
+  top_k: 5
+  similarity_threshold: 0.75
+  enabled: true
+
+supabase:
+  url_env: "SUPABASE_URL"
+  key_env: "SUPABASE_ANON_KEY"
+  session_table: "conductor_sessions"
+  experiments_table: "conductor_experiments"
+  memories_table: "conductor_memories"
+
+program:
+  path: "program.md"
+  train_script: "train.py"
+  eval_script: "evaluate.py"
+  results_file: "results.json"
+  datasets_dir: "~/.orchestra/datasets"

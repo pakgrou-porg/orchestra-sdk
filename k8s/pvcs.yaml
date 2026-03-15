@@ -1,0 +1,44 @@
+---
+# Workspace PVC — ReadWriteMany (NFS) for Conductor + Musician shared access
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestra-workspace
+  namespace: orchestra
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-client   # Replace with your NFS StorageClass
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# Datasets PVC — ReadOnlyMany (NFS) for Musician containers
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestra-datasets
+  namespace: orchestra
+spec:
+  accessModes:
+    - ReadOnlyMany
+  storageClassName: nfs-client
+  resources:
+    requests:
+      storage: 200Gi
+
+---
+# Models PVC — ReadWriteOnce for model cache (single node)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orchestra-models
+  namespace: orchestra
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path   # K3s default local storage
+  resources:
+    requests:
+      storage: 100Gi
