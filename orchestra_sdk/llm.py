@@ -72,6 +72,67 @@ class Message:
 
 
 # ---------------------------------------------------------------------------
+# Base URL probe helper
+# ---------------------------------------------------------------------------
+
+
+def _probe_base_url(raw_url: str, timeout: float = 5.0) -> str:
+    """
+    Detect whether a local OpenAI-compatible server uses /v1 or /api/v1.
+
+    Strategy:
+      1. Strip any trailing /v1 or /api/v1 from the configured URL to get the
+         server root (e.g. "http://10.116.2.145:1234").
+      2. Try GET <root>/v1/models  — standard OpenAI path.
+      3. If that fails (non-2xx or connection error), try GET <root>/api/v1/models
+         — LM Studio ≥ 0.4.x path.
+      4. Return the working base URL (including the /v1 or /api/v1 suffix).
+      5. If both fail, return the original configured URL unchanged and log a
+         warning so the caller can surface the error at request time.
+
+    Only runs for local/custom providers (URLs that are not openrouter.ai,
+    anthropic.com, or openai.com). Cloud providers are returned as-is.
+    """
+    # Don't probe cloud providers
+    cloud_hosts = ("openrouter.ai", "anthropic.com", "openai.com")
+    if any(h in raw_url for h in cloud_hosts):
+        return raw_url
+
+    # Strip known suffixes to get the server root
+    root = raw_url.rstrip("/")
+    for suffix in ("/api/v1", "/v1"):
+        if root.endswith(suffix):
+            root = root[: -len(suffix)]
+            break
+
+    candidates = [
+        f"{root}/v1",
+        f"{root}/api/v1",
+    ]
+
+    for candidate in candidates:
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.get(f"{candidate}/models")
+                if resp.status_code < 400:
+                    if candidate != raw_url.rstrip("/"):
+                        logger.info(
+                            f"[LLMClient] base_url probe: '{raw_url}' resolved to "
+                            f"'{candidate}' (tried {candidates})"
+                        )
+                    return candidate
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
+            continue
+
+    logger.warning(
+        f"[LLMClient] base_url probe: could not reach server at '{raw_url}'. "
+        f"Tried: {candidates}. Proceeding with configured URL — errors will "
+        "surface at request time."
+    )
+    return raw_url.rstrip("/")
+
+
+# ---------------------------------------------------------------------------
 # LLM Client
 # ---------------------------------------------------------------------------
 
@@ -80,12 +141,22 @@ class LLMClient:
     """
     Async LLM client using httpx.
     Supports all OpenAI-compatible endpoints plus Anthropic.
+
+    For local providers (lmstudio, custom, openai_compat), the constructor
+    automatically probes the server to resolve whether it uses /v1 or /api/v1,
+    so the conductor_config.yaml does not need to specify the exact path.
     """
 
-    def __init__(self, config: LLMConfig):
+    def __init__(self, config: LLMConfig, probe: bool = True):
         self.config = config
         self._api_key = config.get_api_key()
-        self._base_url = config.get_base_url()
+        raw_url = config.get_base_url()
+
+        # Auto-detect /v1 vs /api/v1 for local/custom providers
+        if probe and config.provider in ("lmstudio", "custom", "openai_compat"):
+            self._base_url = _probe_base_url(raw_url)
+        else:
+            self._base_url = raw_url
 
     def _build_headers(self) -> dict:
         headers = {"Content-Type": "application/json"}

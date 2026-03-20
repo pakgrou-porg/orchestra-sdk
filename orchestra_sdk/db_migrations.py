@@ -3,6 +3,9 @@ orchestra_sdk.db_migrations
 =============================
 SQL migrations for Conductor tables in Supabase.
 Run with: orchestra migrate --env .env
+
+Note: CREATE POLICY IF NOT EXISTS is not supported in Postgres 15 (Supabase default).
+      Policies are wrapped in DO $$ ... $$ blocks that check pg_policies first.
 """
 
 from __future__ import annotations
@@ -30,10 +33,16 @@ CREATE TABLE IF NOT EXISTS conductor_sessions (
 -- Index for fast lookup by name
 CREATE INDEX IF NOT EXISTS conductor_sessions_name_idx ON conductor_sessions (name);
 
--- RLS: allow authenticated users to manage their sessions
+-- RLS: allow all authenticated users to manage their sessions
 ALTER TABLE conductor_sessions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY IF NOT EXISTS "conductor_sessions_all" ON conductor_sessions
-    FOR ALL USING (true);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'conductor_sessions' AND policyname = 'conductor_sessions_all'
+  ) THEN
+    CREATE POLICY "conductor_sessions_all" ON conductor_sessions FOR ALL USING (true);
+  END IF;
+END $$;
 """,
     },
     {
@@ -65,8 +74,14 @@ CREATE INDEX IF NOT EXISTS conductor_experiments_decision_idx
 
 -- RLS
 ALTER TABLE conductor_experiments ENABLE ROW LEVEL SECURITY;
-CREATE POLICY IF NOT EXISTS "conductor_experiments_all" ON conductor_experiments
-    FOR ALL USING (true);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'conductor_experiments' AND policyname = 'conductor_experiments_all'
+  ) THEN
+    CREATE POLICY "conductor_experiments_all" ON conductor_experiments FOR ALL USING (true);
+  END IF;
+END $$;
 """,
     },
     {
@@ -99,8 +114,14 @@ CREATE INDEX IF NOT EXISTS conductor_memories_session_idx
 
 -- RLS
 ALTER TABLE conductor_memories ENABLE ROW LEVEL SECURITY;
-CREATE POLICY IF NOT EXISTS "conductor_memories_all" ON conductor_memories
-    FOR ALL USING (true);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'conductor_memories' AND policyname = 'conductor_memories_all'
+  ) THEN
+    CREATE POLICY "conductor_memories_all" ON conductor_memories FOR ALL USING (true);
+  END IF;
+END $$;
 """,
     },
     {
@@ -181,7 +202,7 @@ def run_migrations(dry_run: bool = False, console=None) -> None:
             if console:
                 console.print(f"[green]✓[/green] {name}")
         except Exception as e:
-            # Try direct postgrest approach
+            # exec_sql RPC not available — instruct user to run manually
             if console:
                 console.print(
                     f"[yellow]Note:[/yellow] {name} — {e}\n"
