@@ -7,9 +7,11 @@ Supports OpenRouter, Anthropic, OpenAI, and local LMStudio/Ollama endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional, Type, TypeVar
 
 import httpx
@@ -150,13 +152,29 @@ class LLMClient:
     def __init__(self, config: LLMConfig, probe: bool = True):
         self.config = config
         self._api_key = config.get_api_key()
-        raw_url = config.get_base_url()
+        self._raw_url = config.get_base_url()
+        self._probe = probe and config.provider in ("lmstudio", "custom", "openai_compat")
+        # _base_url is set eagerly for non-probe providers; probe providers defer
+        # resolution to the first async call via _ensure_base_url() to avoid
+        # blocking the event loop during construction.
+        self._base_url: Optional[str] = None if self._probe else self._raw_url
+        self._probe_lock = asyncio.Lock()
 
-        # Auto-detect /v1 vs /api/v1 for local/custom providers
-        if probe and config.provider in ("lmstudio", "custom", "openai_compat"):
-            self._base_url = _probe_base_url(raw_url)
-        else:
-            self._base_url = raw_url
+    async def _ensure_base_url(self) -> str:
+        """Resolve base URL, running the synchronous probe in a thread executor
+        so the event loop is never blocked during construction or first call."""
+        if self._base_url is not None:
+            return self._base_url
+        async with self._probe_lock:
+            # Double-check after acquiring lock
+            if self._base_url is not None:
+                return self._base_url
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                self._base_url = await loop.run_in_executor(
+                    pool, _probe_base_url, self._raw_url
+                )
+        return self._base_url
 
     def _build_headers(self) -> dict:
         headers = {"Content-Type": "application/json"}
@@ -187,10 +205,11 @@ class LLMClient:
             payload["response_format"] = response_format
         return payload
 
-    def _get_endpoint(self) -> str:
+    async def _get_endpoint(self) -> str:
+        base = await self._ensure_base_url()
         if self.config.provider == "anthropic":
-            return f"{self._base_url}/messages"
-        return f"{self._base_url}/chat/completions"
+            return f"{base}/messages"
+        return f"{base}/chat/completions"
 
     def _parse_response(self, data: dict) -> str:
         """Extract the assistant message content from the API response."""
@@ -219,7 +238,7 @@ class LLMClient:
         """
         payload = self._build_payload(messages, max_tokens, temperature)
         headers = self._build_headers()
-        endpoint = self._get_endpoint()
+        endpoint = await self._get_endpoint()
 
         start = time.time()
         try:
@@ -248,7 +267,7 @@ class LLMClient:
 
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             raise LLMError(
-                f"Cannot connect to {self.config.provider} at {self._base_url}: {e}"
+                f"Cannot connect to {self.config.provider} at {self._raw_url}: {e}"
             ) from e
 
     async def structured_output(

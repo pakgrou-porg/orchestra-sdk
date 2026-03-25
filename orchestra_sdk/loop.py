@@ -8,7 +8,10 @@ Implements the 10-step per-iteration cycle with keep/discard logic.
 from __future__ import annotations
 
 import asyncio
+import datetime
+import json as _json
 import logging
+import shutil
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -113,6 +116,9 @@ class ConductorLoop:
         self.add_memory = AddMemory(self.memory_store)
 
         # State
+        # NOTE: baseline_metric is the *rolling last-kept* metric, not a fixed initial
+        # measurement. It advances on every KEEP. The name is retained for Supabase
+        # column compatibility; treat it as "last_kept_metric" in logic.
         self.baseline_metric: Optional[float] = None
         self.best_metric: Optional[float] = None       # best score ever achieved this session
         self.best_model_path: Optional[Path] = None    # path to the preserved best model
@@ -138,6 +144,7 @@ class ConductorLoop:
                 f"[yellow]Warning:[/yellow] eval_script not found at {eval_path}. "
                 "Create it before running experiments."
             )
+        self._eval_path = eval_path if eval_path.exists() else None
 
         # Create or resume session in Supabase
         existing = self.supabase.get_session(self.config.session.name)
@@ -372,7 +379,7 @@ class ConductorLoop:
             await self._log_and_memorize(result, hypothesis, str(e))
             return result
 
-        # --- Step 10: Read results ---
+        # --- Step 10: Read results.json (written by train.py) ---
         try:
             results_data = self.read_results.run()
             target_metric = results_data["target_metric"]
@@ -391,6 +398,30 @@ class ConductorLoop:
             )
             await self._log_and_memorize(result, hypothesis, str(e))
             return result
+
+        # --- Step 10b: Run evaluate.py if present ---
+        if self._eval_path is not None:
+            console.print(f"  [dim]→ Running evaluate.py...[/dim]")
+            try:
+                import subprocess
+                eval_proc = subprocess.run(
+                    ["python", str(self._eval_path)],
+                    cwd=str(self.config.session.workspace_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=self.config.runner.timeout_seconds,
+                )
+                if eval_proc.returncode != 0:
+                    logger.warning(
+                        f"evaluate.py exited {eval_proc.returncode}: "
+                        f"{eval_proc.stderr[:300]}"
+                    )
+                else:
+                    logger.debug(f"evaluate.py stdout: {eval_proc.stdout[:300]}")
+            except subprocess.TimeoutExpired:
+                logger.warning("evaluate.py timed out; continuing without eval output")
+            except Exception as e:
+                logger.warning(f"evaluate.py failed to run: {e}")
 
         # --- Step 11: Keep or discard ---
         duration = time.time() - start_time
@@ -496,8 +527,6 @@ class ConductorLoop:
 
         Returns the path to the best/ directory, or None if nothing to copy.
         """
-        import shutil
-        import json as _json
 
         workspace = self.config.session.workspace_path
         output_dir = workspace / "output"
@@ -520,7 +549,7 @@ class ConductorLoop:
                 "iteration": iteration,
                 "metric": metric,
                 "git_sha": self.last_keep_sha,
-                "timestamp": __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+                "timestamp": datetime.datetime.utcnow().isoformat() + 'Z',
             }
             (best_dir / "best_manifest.json").write_text(
                 _json.dumps(manifest, indent=2)

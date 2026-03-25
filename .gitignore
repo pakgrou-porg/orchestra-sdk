@@ -14,3 +14,7 @@ venv/
 .coverage
 htmlcov/
 .mypy_cache/
+
+# Secrets — never commit credentials
+secrets.yaml
+*.secrets.yaml

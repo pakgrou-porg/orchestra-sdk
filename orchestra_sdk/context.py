@@ -12,14 +12,12 @@ from pathlib import Path
 from typing import Optional
 
 from .config import ConductorConfig
+from .constants import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
 from .llm import Message
-from .tools.git_tools import CommitRecord
 from .memory.store import MemoryRecord
+from .tools.git_tools import CommitRecord
 
 logger = logging.getLogger(__name__)
-
-# Approximate chars per token
-_CHARS_PER_TOKEN = 4
 
 
 def _count_tokens(text: str) -> int:

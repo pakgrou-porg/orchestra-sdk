@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from ..constants import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
 from .base import BaseTool, ToolError
 
 
@@ -30,10 +31,9 @@ class EditFileError(FileToolError):
 
 
 # ---------------------------------------------------------------------------
-# Token counting (approximate, no tiktoken dependency at runtime)
+# Token counting (approximate)
+# Shared constant — also used in context.py. Both must stay in sync.
 # ---------------------------------------------------------------------------
-
-_CHARS_PER_TOKEN = 4  # conservative approximation
 
 
 def _approx_tokens(text: str) -> int:
@@ -63,10 +63,12 @@ class ReadFile(BaseTool):
         p = Path(path)
         if not p.is_absolute():
             p = self.workspace_dir / p
-        p = p.resolve()
-        # Security: ensure path is within workspace
+        p = p.resolve()  # resolves symlinks — symlinks pointing outside workspace are caught below
+        workspace_resolved = self.workspace_dir.resolve()
+        # Security: both sides are resolved so symlinks crossing the workspace
+        # boundary are detected correctly.
         try:
-            p.relative_to(self.workspace_dir.resolve())
+            p.relative_to(workspace_resolved)
         except ValueError:
             raise FileToolError(
                 f"Path escape attempt: {path!r} resolves outside workspace"
@@ -99,9 +101,10 @@ class EditFile(BaseTool):
         p = Path(path)
         if not p.is_absolute():
             p = self.workspace_dir / p
-        p = p.resolve()
+        p = p.resolve()  # resolves symlinks
+        workspace_resolved = self.workspace_dir.resolve()
         try:
-            p.relative_to(self.workspace_dir.resolve())
+            p.relative_to(workspace_resolved)
         except ValueError:
             raise FileToolError(f"Path escape attempt: {path!r}")
         return p
@@ -200,9 +203,10 @@ class WriteFile(BaseTool):
         p = Path(path)
         if not p.is_absolute():
             p = self.workspace_dir / p
-        p = p.resolve()
+        p = p.resolve()  # resolves symlinks
+        workspace_resolved = self.workspace_dir.resolve()
         try:
-            p.relative_to(self.workspace_dir.resolve())
+            p.relative_to(workspace_resolved)
         except ValueError:
             raise FileToolError(f"Path escape attempt: {path!r}")
         return p

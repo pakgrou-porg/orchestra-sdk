@@ -125,12 +125,62 @@ END $$;
 """,
     },
     {
-        "name": "004_search_memories_rpc",
+        "name": "004_session_best_runs",
         "sql": """
--- RPC function for pgvector cosine similarity search
+-- Tracks the single best model checkpoint per session
+CREATE TABLE IF NOT EXISTS session_best_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_name TEXT NOT NULL UNIQUE,
+    iteration INT4 NOT NULL,
+    metric FLOAT8 NOT NULL,
+    git_sha TEXT NOT NULL DEFAULT '',
+    model_path TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS session_best_runs_session_idx
+    ON session_best_runs (session_name);
+
+ALTER TABLE session_best_runs ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'session_best_runs' AND policyname = 'session_best_runs_all'
+  ) THEN
+    CREATE POLICY "session_best_runs_all" ON session_best_runs FOR ALL USING (true);
+  END IF;
+END $$;
+""",
+    },
+    {
+        "name": "005_conductor_memories_model_tracking",
+        "sql": """
+-- Add embedding_model column to conductor_memories for vector space versioning.
+-- Rows written before this migration will have NULL (treated as 'nomic-embed-text').
+ALTER TABLE conductor_memories
+    ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT 'nomic-embed-text';
+
+COMMENT ON COLUMN conductor_memories.embedding_model IS
+    'Embedding model used to produce this vector. Rows from different models '
+    'must not be compared — re-embed or filter by model before similarity search.';
+""",
+    },
+    {
+        "name": "006_search_memories_rpc",
+        "sql": """
+-- Drop and recreate the RPC to include embedding_model filter
+DROP FUNCTION IF EXISTS search_conductor_memories;
+""",
+    },
+    {
+        "name": "007_search_memories_rpc_v2",
+        "sql": """
+-- RPC function for pgvector cosine similarity search (v2: model-aware)
 CREATE OR REPLACE FUNCTION search_conductor_memories(
     query_embedding VECTOR(768),
     session_name_filter TEXT,
+    embedding_model_filter TEXT DEFAULT 'nomic-embed-text',
     match_threshold FLOAT DEFAULT 0.75,
     match_count INT DEFAULT 5
 )
@@ -158,6 +208,7 @@ BEGIN
     FROM conductor_memories m
     WHERE
         m.session_name = session_name_filter
+        AND m.embedding_model = embedding_model_filter
         AND 1 - (m.embedding <=> query_embedding) > match_threshold
     ORDER BY m.embedding <=> query_embedding
     LIMIT match_count;
@@ -174,10 +225,12 @@ def run_migrations(dry_run: bool = False, console=None) -> None:
     from supabase import create_client
 
     url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    # Prefer service role key for DDL (CREATE EXTENSION, CREATE TABLE).
+    # Fall back to anon key only if service role is not set.
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
 
     if not url or not key:
-        msg = "SUPABASE_URL and SUPABASE_ANON_KEY (or SUPABASE_SERVICE_ROLE_KEY) must be set."
+        msg = "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_ANON_KEY) must be set."
         if console:
             console.print(f"[red]Error:[/red] {msg}")
         else:
