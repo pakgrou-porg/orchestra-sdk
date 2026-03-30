@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional, Type, TypeVar
@@ -169,11 +170,19 @@ class LLMClient:
             # Double-check after acquiring lock
             if self._base_url is not None:
                 return self._base_url
+            from rich.console import Console as _Console
+            _console = _Console()
+            _console.print(
+                f"  [dim]→ Probing local LLM server at {self._raw_url!r}...[/dim]"
+            )
             loop = asyncio.get_event_loop()
             with ThreadPoolExecutor(max_workers=1) as pool:
                 self._base_url = await loop.run_in_executor(
                     pool, _probe_base_url, self._raw_url
                 )
+            _console.print(
+                f"  [dim]→ LLM endpoint resolved: {self._base_url!r}[/dim]"
+            )
         return self._base_url
 
     def _build_headers(self) -> dict:
@@ -299,11 +308,13 @@ class LLMClient:
                     temperature=temperature if temperature is not None else 0.1,
                 )
 
-                # Strip markdown code blocks if present
+                # Strip markdown code fences if present.
+                # Handles: ```json, ```python, ``` (bare), any language tag.
                 raw = raw.strip()
-                if raw.startswith("```"):
-                    lines = raw.split("\n")
-                    raw = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
+                raw = re.sub(r'^```[a-zA-Z0-9_+\-]*\n?', '', raw)
+                if raw.endswith('```'):
+                    raw = raw[:-3]
+                raw = raw.strip()
 
                 parsed = json.loads(raw)
                 return schema.model_validate(parsed)

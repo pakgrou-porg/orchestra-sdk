@@ -144,16 +144,35 @@ class K8sRunner:
             body=manifest,
         )
 
-        # Poll until complete or timeout
+        # Poll until complete or timeout.
+        # Transient API errors (network blips, apiserver restarts) are retried
+        # up to _MAX_POLL_ERRORS consecutive times before the iteration is failed.
+        _MAX_POLL_ERRORS = 3
+        _consecutive_errors = 0
         poll_interval = 10
         elapsed = 0
         while elapsed < self.config.timeout_seconds:
             time.sleep(poll_interval)
             elapsed = time.time() - start_time
 
-            job = batch_v1.read_namespaced_job(
-                name=job_name, namespace=self.config.namespace
-            )
+            try:
+                job = batch_v1.read_namespaced_job(
+                    name=job_name, namespace=self.config.namespace
+                )
+                _consecutive_errors = 0  # reset on success
+            except Exception as poll_err:
+                _consecutive_errors += 1
+                logger.warning(
+                    f"[K8sRunner] read_namespaced_job transient error "
+                    f"({_consecutive_errors}/{_MAX_POLL_ERRORS}): {poll_err}"
+                )
+                if _consecutive_errors >= _MAX_POLL_ERRORS:
+                    raise K8sExperimentFailedError(
+                        f"K8s API unreachable after {_MAX_POLL_ERRORS} consecutive "
+                        f"poll errors for job {job_name}: {poll_err}"
+                    ) from poll_err
+                continue
+
             status = job.status
 
             if status.succeeded and status.succeeded > 0:

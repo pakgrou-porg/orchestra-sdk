@@ -557,7 +557,7 @@ class ConductorLoop:
 
             # Also update Supabase session_best_runs table if it exists
             try:
-                self.supabase._client().table("session_best_runs").upsert({
+                self.supabase._get_client().table("session_best_runs").upsert({
                     "session_name": self.config.session.name,
                     "iteration": iteration,
                     "metric": metric,

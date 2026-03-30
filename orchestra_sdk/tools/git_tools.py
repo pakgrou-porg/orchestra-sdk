@@ -135,8 +135,18 @@ class GitCommit(BaseTool):
         # Stage all changes
         repo.git.add(A=True)
 
-        # Check if there's anything to commit
-        if not repo.index.diff("HEAD") and not repo.untracked_files:
+        # Check if there's anything to commit.
+        # repo.index.diff("HEAD") raises BadName on a brand-new repo that has no
+        # HEAD yet (i.e. before the very first commit). In that case we fall back
+        # to checking the staged diff against an empty tree, which is always
+        # non-empty if any files were added.
+        try:
+            has_staged = bool(repo.index.diff("HEAD"))
+        except Exception:
+            # No HEAD yet — any staged file counts as a change
+            has_staged = bool(repo.index.entries)
+
+        if not has_staged and not repo.untracked_files:
             raise GitCommitError(
                 "Nothing to commit — working tree is clean. "
                 "The edit_file tool may not have made any changes."
