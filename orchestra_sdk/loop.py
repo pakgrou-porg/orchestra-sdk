@@ -12,6 +12,7 @@ import datetime
 import json as _json
 import logging
 import shutil
+import signal
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -127,6 +128,48 @@ class ConductorLoop:
         self._session_id: Optional[str] = None
 
     # ------------------------------------------------------------------
+    # Graceful shutdown
+    # ------------------------------------------------------------------
+
+    def _install_signal_handlers(self) -> None:
+        """
+        Install SIGTERM and SIGINT handlers so that process-manager evictions
+        (systemd, OKE pod eviction) result in a clean shutdown rather than
+        leaving the session in 'running' status with a dirty workspace.
+        The handler sets a flag; the main loop checks it after each iteration
+        so we never interrupt mid-step.
+        """
+        self._shutdown_requested = False
+
+        def _handle_signal(signum, frame):  # noqa: ARG001
+            sig_name = signal.Signals(signum).name
+            console.print(
+                f"\n[yellow]Received {sig_name} — finishing current step then shutting down…[/yellow]"
+            )
+            self._shutdown_requested = True
+
+        signal.signal(signal.SIGTERM, _handle_signal)
+        signal.signal(signal.SIGINT, _handle_signal)
+
+    async def _graceful_shutdown(self, results: list["IterationResult"]) -> None:
+        """Revert workspace to last KEEP and mark session stopped in Supabase."""
+        console.print("[yellow]Graceful shutdown: reverting workspace to last KEEP…[/yellow]")
+        if self.last_keep_sha:
+            try:
+                self.git.reset.run(self.last_keep_sha)
+                console.print(
+                    f"[green]Workspace reverted to {self.last_keep_sha[:8]}[/green]"
+                )
+            except Exception as e:
+                logger.warning(f"Workspace revert failed during shutdown: {e}")
+        self.supabase.update_session(
+            self.config.session.name,
+            status="stopped",
+            iteration=self.iteration,
+        )
+        self._print_final_summary(results)
+
+    # ------------------------------------------------------------------
     # Initialization
     # ------------------------------------------------------------------
 
@@ -188,6 +231,7 @@ class ConductorLoop:
     async def run(self) -> None:
         """Run the autonomous loop until max_iterations or target_value reached."""
         await self._initialize()
+        self._install_signal_handlers()
 
         console.print(
             Panel(
@@ -209,6 +253,11 @@ class ConductorLoop:
             results.append(result)
 
             self._print_iteration_summary(result)
+
+            # Check graceful shutdown requested by SIGTERM/SIGINT
+            if self._shutdown_requested:
+                await self._graceful_shutdown(results)
+                return
 
             # Check target reached
             if (
