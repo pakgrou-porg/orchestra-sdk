@@ -1,0 +1,75 @@
+# Orchestra Conductor Configuration — Synthetic (no-GPU) Test Session
+# ====================================================================
+# This config is designed for end-to-end testing of the Conductor loop
+# without a GPU, real model weights, or a real dataset.
+#
+# Prerequisites
+# -------------
+# 1. Install the SDK:
+#       pip install -e /path/to/orchestra-sdk
+#
+# 2. Set environment variables:
+#       export SUPABASE_URL=https://<your-project>.supabase.co
+#       export SUPABASE_ANON_KEY=<your-anon-key>
+#       export OPENROUTER_API_KEY=<your-key>   # or set llm.provider below
+#
+# 3. Run migrations (first time only):
+#       orchestra migrate --config conductor_config.yaml
+#
+# 4. Start the session:
+#       orchestra run --config conductor_config.yaml
+#
+# Runner options
+# --------------
+# For "local" runner (no Docker required — runs train.py directly in the
+# host Python process), set runner.type: "local".
+#
+# For Docker (no GPU required — uses python:3.11-slim), set:
+#   runner.type: "docker"
+#   runner.image: "orchestra-musician-synthetic:latest"
+# Then build the image:
+#   docker build -f examples/synthetic/Dockerfile -t orchestra-musician-synthetic .
+
+session:
+  name: "synthetic_test_v1"
+  dataset_id: "synthetic_test_v1"
+  workspace_dir: "~/.orchestra/workspace/synthetic_test_v1"
+  branch: "session/synthetic_test_v1"
+  max_iterations: 20
+  target_metric: "val_loss"
+  target_value: 2.30          # Achievable with good hyperparameters
+  keep_threshold: -0.005      # Keep if val_loss improves by at least 0.005
+
+llm:
+  provider: "openrouter"
+  model: "anthropic/claude-3-5-haiku-20241022"   # Fast + cheap for testing
+  api_key_env: "OPENROUTER_API_KEY"
+  max_tokens: 2048
+  temperature: 0.3
+  context_budget_tokens: 6000
+
+runner:
+  type: "local"               # No Docker or GPU required
+  gpu_device: "none"
+  timeout_seconds: 120        # Synthetic script completes in ~3 seconds
+
+memory:
+  embedding_model: "nomic-embed-text"
+  embedding_url: "http://localhost:11434"   # Ollama (optional — disable below if not running)
+  top_k: 5
+  similarity_threshold: 0.70
+  enabled: false              # Set to true if Ollama is running locally
+
+supabase:
+  url_env: "SUPABASE_URL"
+  key_env: "SUPABASE_ANON_KEY"
+  session_table: "conductor_sessions"
+  experiments_table: "conductor_experiments"
+  memories_table: "conductor_memories"
+
+program:
+  path: "program.md"
+  train_script: "train.py"
+  eval_script: "evaluate.py"
+  results_file: "results.json"
+  datasets_dir: "~/.orchestra/datasets"

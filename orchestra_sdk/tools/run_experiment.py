@@ -48,6 +48,9 @@ class RunExperiment(BaseTool):
         elif config.runner.type == "k8s":
             from ..runner.k8s_runner import K8sRunner
             self._runner = K8sRunner(config.runner, workspace, datasets)
+        elif config.runner.type == "local":
+            from ..runner.local_runner import LocalRunner
+            self._runner = LocalRunner(config.runner, workspace, datasets)
         else:
             raise ValueError(f"Unknown runner type: {config.runner.type!r}")
 

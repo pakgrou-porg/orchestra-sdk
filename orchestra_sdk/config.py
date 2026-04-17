@@ -99,7 +99,7 @@ class LLMConfig(BaseModel):
 
 
 class RunnerConfig(BaseModel):
-    type: Literal["docker", "k8s"] = "docker"
+    type: Literal["docker", "k8s", "local"] = "docker"
     image: str = Field(default="orchestra-musician:latest")
     gpu_device: str = Field(
         default="0",
