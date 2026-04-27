@@ -367,6 +367,7 @@ class ConductorLoop:
 
         # --- Step 7: Apply edit ---
         console.print(f"  [dim]→ Applying edit to {self.config.program.train_script}...[/dim]")
+        edit_result = None
         try:
             edit_result = self.edit_file.run(
                 path=self.config.program.train_script,
@@ -488,10 +489,8 @@ class ConductorLoop:
                 f"[KEEP] iter {iteration} (baseline): {hypothesis.hypothesis}\n"
                 f"metric={target_metric:.4f} (first iteration — baseline established)"
             )
-            try:
+            if edit_result and edit_result.get("applied"):
                 self.git.commit.run(keep_message)
-            except GitCommitError:
-                pass
             result = IterationResult(
                 iteration=iteration,
                 decision=decision,

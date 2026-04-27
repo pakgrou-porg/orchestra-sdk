@@ -17,12 +17,6 @@ from typing import Any, Optional, Type, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from .config import LLMConfig
 

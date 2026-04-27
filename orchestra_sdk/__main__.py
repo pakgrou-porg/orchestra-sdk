@@ -377,9 +377,14 @@ def reset(
         iteration=to_iteration,
         baseline_metric=baseline_at_iter,
     )
+
+    # Delete orphaned experiment records for iterations after the reset point
+    deleted = client.delete_experiments_after_iteration(cfg.session.name, to_iteration)
+    orphan_note = " (orphaned experiment records cleaned)" if deleted else ""
+
     console.print(
         f"[green]✓ Session '{cfg.session.name}' updated: iteration={to_iteration}, "
-        f"baseline_metric={baseline_at_iter}, status=stopped[/green]"
+        f"baseline_metric={baseline_at_iter}, status=stopped{orphan_note}[/green]"
     )
     console.print(
         f"  Resume from here with: [cyan]orchestra run --config {config} --resume[/cyan]"

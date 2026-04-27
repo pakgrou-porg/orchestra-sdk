@@ -13,6 +13,7 @@ The runner:
 """
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import time
@@ -20,6 +21,8 @@ from pathlib import Path
 
 from .docker_runner import ExperimentFailedError, ExperimentResult, ExperimentTimeoutError
 from ..config import RunnerConfig
+
+logger = logging.getLogger(__name__)
 
 
 class LocalRunner:
@@ -71,7 +74,7 @@ class LocalRunner:
             assert proc.stdout is not None
             for line in proc.stdout:
                 line = line.rstrip("\n")
-                print(f"  [train] {line}", flush=True)
+                logger.info("  [train] %s", line)
                 log_lines.append(line)
 
             proc.wait(timeout=max(1, timeout - int(time.monotonic() - start)))

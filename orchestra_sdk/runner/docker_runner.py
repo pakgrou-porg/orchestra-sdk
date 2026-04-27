@@ -125,9 +125,26 @@ class DockerRunner:
         try:
             container = client.containers.run(**container_kwargs)
         except Exception as e:
-            raise ExperimentFailedError(
-                f"Failed to start container: {e}", exit_code=-1, log_tail=""
+            # Image may not be locally available — try pulling it
+            error_msg = str(e).lower()
+            is_image_not_found = (
+                "not found" in error_msg or
+                "no such image" in error_msg or
+                "image" in error_msg and "unknown" in error_msg
             )
+            if not is_image_not_found:
+                raise ExperimentFailedError(
+                    f"Failed to start container: {e}", exit_code=-1, log_tail=""
+                )
+            logger.info(f"[DockerRunner] Image not found locally, pulling: {self.config.image}")
+            try:
+                client.images.pull(self.config.image)
+                container = client.containers.run(**container_kwargs)
+            except Exception as pull_err:
+                raise ExperimentFailedError(
+                    f"Failed to pull image '{self.config.image}': {pull_err}",
+                    exit_code=-1, log_tail=""
+                )
 
         # Poll until done or timeout
         try:

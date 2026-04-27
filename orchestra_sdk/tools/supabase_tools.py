@@ -208,6 +208,19 @@ class SupabaseClient:
         metrics = [e["target_metric"] for e in experiments if e.get("target_metric") is not None]
         return min(metrics) if metrics else None
 
+    def delete_experiments_after_iteration(
+        self, session_name: str, max_iteration: int
+    ) -> bool:
+        """Delete experiment records with iteration > max_iteration to keep Supabase in sync after a reset."""
+        try:
+            self._get_client().table(self.config.experiments_table).delete().eq(
+                "session_name", session_name
+            ).gt("iteration", max_iteration).execute()
+            return True
+        except Exception as e:
+            logger.warning(f"[SupabaseClient] delete_experiments_after_iteration failed: {e}")
+            return False
+
 
 # ---------------------------------------------------------------------------
 # Tool wrappers
