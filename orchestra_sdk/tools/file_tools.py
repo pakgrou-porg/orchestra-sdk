@@ -8,7 +8,7 @@ All paths are resolved relative to the session workspace directory.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -186,7 +186,7 @@ class ListFiles(BaseTool):
                     {
                         "path": str(p.relative_to(self.workspace_dir)),
                         "size_bytes": stat.st_size,
-                        "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                     }
                 )
         return results

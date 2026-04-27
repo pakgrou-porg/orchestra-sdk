@@ -15,18 +15,9 @@ from pathlib import Path
 from typing import Optional
 
 from ..config import RunnerConfig
+from .docker_runner import ExperimentFailedError, ExperimentTimeoutError
 
 logger = logging.getLogger(__name__)
-
-
-class K8sExperimentTimeoutError(Exception):
-    pass
-
-
-class K8sExperimentFailedError(Exception):
-    def __init__(self, message: str, log_tail: str = ""):
-        super().__init__(message)
-        self.log_tail = log_tail
 
 
 @dataclass
@@ -167,9 +158,11 @@ class K8sRunner:
                     f"({_consecutive_errors}/{_MAX_POLL_ERRORS}): {poll_err}"
                 )
                 if _consecutive_errors >= _MAX_POLL_ERRORS:
-                    raise K8sExperimentFailedError(
-                        f"K8s API unreachable after {_MAX_POLL_ERRORS} consecutive "
-                        f"poll errors for job {job_name}: {poll_err}"
+                    raise ExperimentFailedError(
+                        f"K8sAPI unreachable after {_MAX_POLL_ERRORS} consecutive "
+                        f"poll errors for job {job_name}: {poll_err}",
+                        exit_code=-1,
+                        log_tail="",
                     ) from poll_err
                 continue
 
@@ -187,8 +180,9 @@ class K8sRunner:
 
             if status.failed and status.failed > 0:
                 log_tail = self._get_pod_logs(core_v1, job_name)
-                raise K8sExperimentFailedError(
+                raise ExperimentFailedError(
                     f"K8s Job {job_name} failed after {elapsed:.1f}s",
+                    exit_code=-1,
                     log_tail=log_tail,
                 )
 
@@ -201,7 +195,7 @@ class K8sRunner:
             )
         except Exception:
             pass
-        raise K8sExperimentTimeoutError(
+        raise ExperimentTimeoutError(
             f"K8s Job {job_name} exceeded timeout of {self.config.timeout_seconds}s"
         )
 

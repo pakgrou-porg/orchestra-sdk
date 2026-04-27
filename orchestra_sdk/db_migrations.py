@@ -224,13 +224,15 @@ def run_migrations(dry_run: bool = False, console=None) -> None:
     import os
     from supabase import create_client
 
-    url = os.environ.get("SUPABASE_URL")
-    # Prefer service role key for DDL (CREATE EXTENSION, CREATE TABLE).
-    # Fall back to anon key only if service role is not set.
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+    from .config import SupabaseConfig
 
-    if not url or not key:
-        msg = "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_ANON_KEY) must be set."
+    try:
+        config = SupabaseConfig()
+        url = config.get_url()
+        # Prefer service role key for DDL (CREATE EXTENSION, CREATE TABLE).
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or config.get_key()
+    except Exception as e:
+        msg = f"Could not load Supabase config. Ensure SUPABASE_URL is set in environment or conductor_config.yaml: {e}"
         if console:
             console.print(f"[red]Error:[/red] {msg}")
         else:

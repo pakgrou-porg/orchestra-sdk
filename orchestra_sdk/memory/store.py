@@ -139,6 +139,7 @@ class MemoryStore:
                 {
                     "query_embedding": query_embedding,
                     "session_name_filter": self.session_name,
+                    "embedding_model_filter": self.memory_config.embedding_model,
                     "match_threshold": self.memory_config.similarity_threshold,
                     "match_count": self.memory_config.top_k,
                 },

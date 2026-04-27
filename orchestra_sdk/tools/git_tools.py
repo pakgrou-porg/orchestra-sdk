@@ -8,7 +8,7 @@ All operations are scoped to the session workspace directory.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -113,7 +113,7 @@ class GitLog(BaseTool):
                     sha=commit.hexsha,
                     short_sha=commit.hexsha[:8],
                     message=commit.message.strip(),
-                    timestamp=datetime.fromtimestamp(commit.committed_date),
+                    timestamp=datetime.fromtimestamp(commit.committed_date, tz=timezone.utc),
                     diff_summary=diff_text[:500],
                 )
             )
@@ -160,7 +160,7 @@ class GitCommit(BaseTool):
         return {
             "sha": commit.hexsha,
             "short_sha": commit.hexsha[:8],
-            "timestamp": datetime.fromtimestamp(commit.committed_date).isoformat(),
+            "timestamp": datetime.fromtimestamp(commit.committed_date, tz=timezone.utc).isoformat(),
             "message": message,
         }
 

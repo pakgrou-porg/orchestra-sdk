@@ -145,7 +145,11 @@ def assemble_context(
     # --- Memories (lower priority) ---
     remaining = budget - used
     memory_text = _format_memories(memories)
-    memory_section = _truncate(memory_text, remaining - 100, "memories")
+    memory_budget = remaining - 100
+    if memory_budget > 0:
+        memory_section = _truncate(memory_text, memory_budget, "memories")
+    else:
+        memory_section = "(memories omitted — context budget exhausted)"
 
     logger.debug(f"[Context] Assembled ~{used} tokens for iteration {iteration}")
 

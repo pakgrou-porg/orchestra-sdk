@@ -450,16 +450,19 @@ class ConductorLoop:
 
         # --- Step 10b: Run evaluate.py if present ---
         if self._eval_path is not None:
-            console.print(f"  [dim]→ Running evaluate.py...[/dim]")
+            console.print(f"  [dim] Running evaluate.py...[/dim]")
             try:
                 import subprocess
-                eval_proc = subprocess.run(
-                    ["python", str(self._eval_path)],
-                    cwd=str(self.config.session.workspace_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=self.config.runner.timeout_seconds,
-                )
+
+                def _run_eval():
+                    return subprocess.run(
+                        ["python", str(self._eval_path)],
+                        cwd=str(self.config.session.workspace_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=self.config.runner.timeout_seconds,
+                    )
+                eval_proc = await asyncio.to_thread(_run_eval)
                 if eval_proc.returncode != 0:
                     logger.warning(
                         f"evaluate.py exited {eval_proc.returncode}: "
@@ -598,7 +601,7 @@ class ConductorLoop:
                 "iteration": iteration,
                 "metric": metric,
                 "git_sha": self.last_keep_sha,
-                "timestamp": datetime.datetime.utcnow().isoformat() + 'Z',
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
             (best_dir / "best_manifest.json").write_text(
                 _json.dumps(manifest, indent=2)
@@ -647,11 +650,13 @@ class ConductorLoop:
         )
 
         if hypothesis and self.config.memory.enabled:
+            metric_str = f"{result.target_metric:.4f}" if result.target_metric is not None else "N/A"
+            delta_str = f"{result.delta:+.4f}" if result.delta is not None else "N/A"
             memory_content = (
                 f"{hypothesis.memory_note} "
                 f"Result: {result.decision.value}. "
-                f"Metric: {result.target_metric:.4f if result.target_metric else 'N/A'}. "
-                f"Delta: {result.delta:+.4f if result.delta else 'N/A'}."
+                f"Metric: {metric_str}. "
+                f"Delta: {delta_str}."
             )
             self.add_memory.run(
                 content=memory_content,
