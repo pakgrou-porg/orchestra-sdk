@@ -45,6 +45,10 @@ LORA_ALPHA = 32
 LORA_DROPOUT = 0.05
 LORA_TARGET_MODULES = ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
+# Precision — set True for Ampere+ GPUs (RTX 30xx / A100 / H100)
+# set False for pre-Ampere GPUs (RTX 20xx or older) which require fp16
+USE_BF16 = True
+
 # ---------------------------------------------------------------------------
 # Paths and model
 # ---------------------------------------------------------------------------
@@ -182,7 +186,8 @@ def main() -> None:
         eval_strategy="epoch",
         save_strategy="no",
         logging_steps=10,
-        bf16=True,           # use fp16=True on pre-Ampere GPUs (e.g. RTX 20xx)
+        bf16=USE_BF16,
+        fp16=not USE_BF16,
         dataset_text_field="text",
         max_seq_length=MAX_SEQ_LENGTH,
         packing=False,       # set True for short sequences to improve throughput
@@ -225,6 +230,7 @@ def main() -> None:
         "gradient_accumulation_steps": GRADIENT_ACCUMULATION_STEPS,
         "max_seq_length": MAX_SEQ_LENGTH,
         "model": MODEL_NAME,
+        "use_bf16": USE_BF16,
         "iteration": iteration,
         "hypothesis_sha": sha,
         "duration_seconds": round(duration, 1),
