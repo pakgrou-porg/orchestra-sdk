@@ -10,7 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # Python 3.13 is excluded until the `kubernetes` package publishes a
+        # 3.13-compatible wheel (kubernetes>=29 does not yet ship one on PyPI).
+        # Re-add "3.13" once https://github.com/kubernetes-client/python/issues/2138
+        # is resolved and a wheel is available.
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 

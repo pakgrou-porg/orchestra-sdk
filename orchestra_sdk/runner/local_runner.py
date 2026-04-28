@@ -7,13 +7,16 @@ subprocess.  No Docker or GPU required.  Intended for synthetic/CI testing.
 The runner:
   1. Spawns `python train.py` in the workspace directory.
   2. Streams stdout/stderr to a buffer (last 100 lines kept as log_tail).
-  3. Enforces the configured timeout via subprocess.TimeoutExpired.
+  3. Enforces the configured timeout via a deadline computed from the start
+     time — the deadline is checked both during stdout streaming and in the
+     final proc.wait() call so the timeout is never silently exceeded.
   4. Returns a RunResult on success or raises ExperimentFailedError /
      ExperimentTimeoutError on failure.
 """
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -55,6 +58,7 @@ class LocalRunner:
         env = self._build_env()
         cmd = [sys.executable, str(train_script)]
         timeout = self.config.timeout_seconds
+        deadline = time.monotonic() + timeout
 
         start = time.monotonic()
         log_lines: list[str] = []
@@ -70,14 +74,25 @@ class LocalRunner:
                 bufsize=1,
             )
 
-            # Stream output line by line so the user sees progress
+            # Stream output line by line so the user sees progress.
+            # Check the deadline on every line so a process that produces
+            # continuous output cannot outlive the configured timeout.
             assert proc.stdout is not None
             for line in proc.stdout:
+                if time.monotonic() > deadline:
+                    proc.kill()
+                    proc.wait()
+                    raise ExperimentTimeoutError(
+                        f"train.py exceeded timeout of {timeout}s (killed during stdout drain)"
+                    )
                 line = line.rstrip("\n")
                 logger.info("  [train] %s", line)
                 log_lines.append(line)
 
-            proc.wait(timeout=max(1, timeout - int(time.monotonic() - start)))
+            # Final wait: use the remaining budget from the original deadline
+            # rather than a fixed value so the timeout is never silently extended.
+            remaining = max(1.0, deadline - time.monotonic())
+            proc.wait(timeout=remaining)
 
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -108,7 +123,6 @@ class LocalRunner:
 
     def _build_env(self) -> dict[str, str]:
         """Build the subprocess environment."""
-        import os
         env = os.environ.copy()
         env["DATASETS_DIR"] = str(self.datasets_dir)
         env["RESULTS_FILE"] = str(self.workspace_dir / "results.json")

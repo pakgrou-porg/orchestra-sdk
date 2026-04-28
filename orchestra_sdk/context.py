@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
 
 from .config import ConductorConfig
 from .constants import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
@@ -36,9 +38,6 @@ def _truncate(text: str, max_tokens: int, label: str = "") -> str:
 # ---------------------------------------------------------------------------
 # Hypothesis schema (Pydantic) — defined here for import by loop.py
 # ---------------------------------------------------------------------------
-
-from pydantic import BaseModel, Field
-from typing import Literal
 
 
 class HypothesisEdit(BaseModel):
