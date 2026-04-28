@@ -216,6 +216,76 @@ END;
 $$;
 """,
     },
+    {
+        "name": "008_datasets_rls_policies",
+        "sql": """
+-- Allow the dashboard anon key to INSERT, UPDATE, and DELETE datasets and samples.
+-- Without these policies Supabase RLS silently swallows writes (HTTP 204, 0 rows affected).
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='datasets' AND policyname='allow_select_datasets') THEN
+    EXECUTE 'CREATE POLICY allow_select_datasets ON public.datasets FOR SELECT USING (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='datasets' AND policyname='allow_insert_datasets') THEN
+    EXECUTE 'CREATE POLICY allow_insert_datasets ON public.datasets FOR INSERT WITH CHECK (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='datasets' AND policyname='allow_update_datasets') THEN
+    EXECUTE 'CREATE POLICY allow_update_datasets ON public.datasets FOR UPDATE USING (true) WITH CHECK (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='datasets' AND policyname='allow_delete_datasets') THEN
+    EXECUTE 'CREATE POLICY allow_delete_datasets ON public.datasets FOR DELETE USING (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='dataset_samples' AND policyname='allow_select_dataset_samples') THEN
+    EXECUTE 'CREATE POLICY allow_select_dataset_samples ON public.dataset_samples FOR SELECT USING (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='dataset_samples' AND policyname='allow_insert_dataset_samples') THEN
+    EXECUTE 'CREATE POLICY allow_insert_dataset_samples ON public.dataset_samples FOR INSERT WITH CHECK (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='dataset_samples' AND policyname='allow_update_dataset_samples') THEN
+    EXECUTE 'CREATE POLICY allow_update_dataset_samples ON public.dataset_samples FOR UPDATE USING (true) WITH CHECK (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='dataset_samples' AND policyname='allow_delete_dataset_samples') THEN
+    EXECUTE 'CREATE POLICY allow_delete_dataset_samples ON public.dataset_samples FOR DELETE USING (true)';
+  END IF;
+END $$;
+""",
+    },
+    {
+        "name": "009_hardware_profiles_extended",
+        "sql": """
+-- Extend hardware_profiles with detailed system specification columns.
+-- All columns are idempotent (ADD COLUMN IF NOT EXISTS).
+ALTER TABLE public.hardware_profiles
+  ADD COLUMN IF NOT EXISTS gpu_count              INTEGER       NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS gpu_architecture       TEXT          NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS cuda_version           TEXT          NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS rocm_version           TEXT          NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS cpu_model              TEXT          NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS cpu_cores              INTEGER       NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS cpu_threads            INTEGER       NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS storage_gb             INTEGER       NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS storage_type           TEXT          NOT NULL DEFAULT 'SSD',
+  ADD COLUMN IF NOT EXISTS network_bandwidth_gbps NUMERIC(5,2)  NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS notes                  TEXT          NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS updated_at             TIMESTAMPTZ   NOT NULL DEFAULT now();
+
+-- RLS: allow the dashboard anon key to manage hardware profiles.
+ALTER TABLE public.hardware_profiles ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='hardware_profiles' AND policyname='allow_select_hardware_profiles') THEN
+    EXECUTE 'CREATE POLICY allow_select_hardware_profiles ON public.hardware_profiles FOR SELECT USING (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='hardware_profiles' AND policyname='allow_insert_hardware_profiles') THEN
+    EXECUTE 'CREATE POLICY allow_insert_hardware_profiles ON public.hardware_profiles FOR INSERT WITH CHECK (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='hardware_profiles' AND policyname='allow_update_hardware_profiles') THEN
+    EXECUTE 'CREATE POLICY allow_update_hardware_profiles ON public.hardware_profiles FOR UPDATE USING (true) WITH CHECK (true)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='hardware_profiles' AND policyname='allow_delete_hardware_profiles') THEN
+    EXECUTE 'CREATE POLICY allow_delete_hardware_profiles ON public.hardware_profiles FOR DELETE USING (true)';
+  END IF;
+END $$;
+""",
+    },
 ]
 
 
