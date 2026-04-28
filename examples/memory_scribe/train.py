@@ -1,41 +1,40 @@
 """
-memory_scribe_v1 — LoRA fine-tuning script
-==========================================
+memory_scribe_v1 — LoRA fine-tuning script (Unsloth native)
+============================================================
 Edited iteratively by the Orchestra Conductor.
 DO NOT manually edit hyperparameter values — they are managed by the Conductor.
+
+Uses Unsloth's FastLanguageModel + TRL SFTTrainer for ~2× faster training
+and ~60% lower VRAM usage compared to vanilla PEFT + HuggingFace Trainer.
+
+Dataset format (JSONL, one record per line):
+    {"system_prompt": "...", "user_prompt": "...", "assistant_response": "..."}
+
+Each record is reshaped into the ShareGPT conversations format that Unsloth's
+apply_chat_template() understands natively — no manual tokenisation needed.
 
 To run manually:
     python train.py
 
-Requirements:
-    pip install unsloth transformers datasets torch peft
-    (or use the orchestra-musician Docker image)
+Requirements (included in orchestra-musician Docker image):
+    pip install "unsloth[colab-new]" trl transformers datasets peft accelerate bitsandbytes
 """
+
+from __future__ import annotations
 
 import json
 import os
 import time
 from pathlib import Path
 
-import torch
-from datasets import Dataset
-from peft import LoraConfig, TaskType, get_peft_model
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    DataCollatorForSeq2Seq,
-    Trainer,
-    TrainingArguments,
-)
-
 # ---------------------------------------------------------------------------
 # Hyperparameters — managed by Conductor
 # ---------------------------------------------------------------------------
 
 LEARNING_RATE = 2e-4
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 4
-NUM_EPOCHS = 2
+NUM_EPOCHS = 1
 WARMUP_RATIO = 0.05
 WEIGHT_DECAY = 0.01
 MAX_SEQ_LENGTH = 2048
@@ -44,10 +43,10 @@ MAX_SEQ_LENGTH = 2048
 LORA_RANK = 16
 LORA_ALPHA = 32
 LORA_DROPOUT = 0.05
-LORA_TARGET_MODULES = ["q_proj", "v_proj", "k_proj", "o_proj"]
+LORA_TARGET_MODULES = ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths and model
 # ---------------------------------------------------------------------------
 
 DATASETS_DIR = Path(os.environ.get("DATASETS_DIR", "/datasets"))
@@ -57,31 +56,43 @@ OUTPUT_DIR = Path("./output")
 RESULTS_FILE = Path("results.json")
 
 # ---------------------------------------------------------------------------
-# Data loading
+# Data loading and ShareGPT reshape
 # ---------------------------------------------------------------------------
 
 
-def load_dataset_from_jsonl(path: Path) -> Dataset:
-    """Load a JSONL dataset file."""
+def load_jsonl(path: Path) -> list[dict]:
+    """Load a JSONL file into a list of dicts."""
     records = []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
                 records.append(json.loads(line))
-    return Dataset.from_list(records)
+    return records
 
 
-def format_sample(sample: dict) -> str:
-    """Format a sample as a chat conversation."""
-    system = sample.get("system_prompt", "You are a helpful assistant.")
-    user = sample.get("user_prompt", "")
-    assistant = sample.get("assistant_response", "")
-    return (
-        f"<|im_start|>system\n{system}<|im_end|>\n"
-        f"<|im_start|>user\n{user}<|im_end|>\n"
-        f"<|im_start|>assistant\n{assistant}<|im_end|>"
-    )
+def to_sharegpt(records: list[dict]) -> list[dict]:
+    """
+    Reshape Orchestra dataset records into the ShareGPT conversations format.
+
+    Input:  {"system_prompt": str, "user_prompt": str, "assistant_response": str}
+    Output: {"conversations": [{"role": "system",    "value": ...},
+                                {"role": "user",      "value": ...},
+                                {"role": "assistant", "value": ...}]}
+
+    Unsloth's get_chat_template() and apply_chat_template() consume this
+    format directly — no manual string formatting or tokenisation required.
+    """
+    result = []
+    for r in records:
+        turns = []
+        system = r.get("system_prompt", "").strip()
+        if system:
+            turns.append({"role": "system", "value": system})
+        turns.append({"role": "user",      "value": r.get("user_prompt", "").strip()})
+        turns.append({"role": "assistant", "value": r.get("assistant_response", "").strip()})
+        result.append({"conversations": turns})
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -89,56 +100,76 @@ def format_sample(sample: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def main():
+def main() -> None:
     start_time = time.time()
 
-    # Load tokenizer and model
-    print(f"Loading model: {MODEL_NAME}")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
+    iteration = int(os.environ.get("ITERATION", 0))
+    sha = os.environ.get("HYPOTHESIS_SHA", "unknown")
+    print(f"[Orchestra] iteration={iteration} sha={sha[:8]}")
+
+    # ── 1. Load model and tokeniser via Unsloth ──────────────────────────────
+    from unsloth import FastLanguageModel  # type: ignore
+
+    print(f"[Orchestra] Loading model: {MODEL_NAME}")
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=MODEL_NAME,
+        max_seq_length=MAX_SEQ_LENGTH,
         load_in_4bit=True,
-        device_map="auto",
-        trust_remote_code=True,
+        dtype=None,  # auto-detect: bfloat16 on Ampere+, float16 otherwise
     )
 
-    # Apply LoRA
-    lora_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
+    # ── 2. Apply LoRA via Unsloth (fused kernels, gradient checkpointing) ────
+    model = FastLanguageModel.get_peft_model(
+        model,
         r=LORA_RANK,
         lora_alpha=LORA_ALPHA,
         lora_dropout=LORA_DROPOUT,
         target_modules=LORA_TARGET_MODULES,
         bias="none",
+        use_gradient_checkpointing="unsloth",  # saves VRAM on long sequences
+        random_state=42,
+        use_rslora=False,
     )
-    model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    # Load dataset
+    # ── 3. Load dataset and reshape to ShareGPT format ───────────────────────
     train_path = DATASETS_DIR / DATASET_NAME / "train.jsonl"
-    eval_path = DATASETS_DIR / DATASET_NAME / "eval.jsonl"
+    eval_path  = DATASETS_DIR / DATASET_NAME / "eval.jsonl"
 
-    print(f"Loading dataset from {train_path}")
-    train_dataset = load_dataset_from_jsonl(train_path)
-    eval_dataset = load_dataset_from_jsonl(eval_path)
+    print(f"[Orchestra] Loading dataset from {train_path}")
+    train_records = load_jsonl(train_path)
+    eval_records  = load_jsonl(eval_path)
 
-    # Tokenize
-    def tokenize(sample):
-        text = format_sample(sample)
-        tokens = tokenizer(
-            text,
-            max_length=MAX_SEQ_LENGTH,
-            truncation=True,
-            padding=False,
+    from datasets import Dataset  # type: ignore
+
+    train_dataset = Dataset.from_list(to_sharegpt(train_records))
+    eval_dataset  = Dataset.from_list(to_sharegpt(eval_records))
+    print(f"[Orchestra] train={len(train_dataset)} eval={len(eval_dataset)} samples")
+
+    # ── 4. Apply chat template via Unsloth ───────────────────────────────────
+    from unsloth.chat_templates import get_chat_template  # type: ignore
+
+    tokenizer = get_chat_template(tokenizer, chat_template="chatml")
+
+    def apply_template(batch: dict) -> dict:
+        texts = tokenizer.apply_chat_template(
+            batch["conversations"],
+            tokenize=False,
+            add_generation_prompt=False,
         )
-        tokens["labels"] = tokens["input_ids"].copy()
-        return tokens
+        return {"text": texts}
 
-    train_tokenized = train_dataset.map(tokenize, remove_columns=train_dataset.column_names)
-    eval_tokenized = eval_dataset.map(tokenize, remove_columns=eval_dataset.column_names)
+    train_dataset = train_dataset.map(
+        apply_template, batched=True, remove_columns=["conversations"]
+    )
+    eval_dataset = eval_dataset.map(
+        apply_template, batched=True, remove_columns=["conversations"]
+    )
 
-    # Training arguments
-    training_args = TrainingArguments(
+    # ── 5. SFTTrainer ─────────────────────────────────────────────────────────
+    from trl import SFTTrainer, SFTConfig  # type: ignore
+
+    training_args = SFTConfig(
         output_dir=str(OUTPUT_DIR),
         num_train_epochs=NUM_EPOCHS,
         per_device_train_batch_size=BATCH_SIZE,
@@ -148,49 +179,60 @@ def main():
         warmup_ratio=WARMUP_RATIO,
         weight_decay=WEIGHT_DECAY,
         lr_scheduler_type="cosine",
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="no",
         logging_steps=10,
-        fp16=True,
-        dataloader_num_workers=2,
+        bf16=True,           # use fp16=True on pre-Ampere GPUs (e.g. RTX 20xx)
+        dataset_text_field="text",
+        max_seq_length=MAX_SEQ_LENGTH,
+        packing=False,       # set True for short sequences to improve throughput
         report_to="none",
+        dataloader_num_workers=2,
     )
 
-    # Trainer
-    data_collator = DataCollatorForSeq2Seq(tokenizer, model=model, padding=True)
-    trainer = Trainer(
+    trainer = SFTTrainer(
         model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         args=training_args,
-        train_dataset=train_tokenized,
-        eval_dataset=eval_tokenized,
-        data_collator=data_collator,
     )
 
-    print("Starting training...")
+    # ── 6. Train ──────────────────────────────────────────────────────────────
+    print("[Orchestra] Starting training …")
     trainer.train()
 
-    # Evaluate
-    print("Evaluating...")
+    # ── 7. Evaluate ───────────────────────────────────────────────────────────
+    print("[Orchestra] Evaluating …")
     eval_results = trainer.evaluate()
     val_loss = eval_results.get("eval_loss", 99.0)
 
-    # Write results.json — REQUIRED by Conductor
+    # ── 8. Write results.json — REQUIRED by the Conductor ────────────────────
     duration = time.time() - start_time
+    log_history = trainer.state.log_history
+    train_loss = next(
+        (e["loss"] for e in reversed(log_history) if "loss" in e), 0.0
+    )
+
     results = {
         "val_loss": val_loss,
-        "train_loss": trainer.state.log_history[-1].get("loss", 0.0),
+        "train_loss": train_loss,
         "epoch": NUM_EPOCHS,
         "learning_rate": LEARNING_RATE,
         "lora_rank": LORA_RANK,
         "lora_alpha": LORA_ALPHA,
         "batch_size": BATCH_SIZE,
         "gradient_accumulation_steps": GRADIENT_ACCUMULATION_STEPS,
-        "duration_seconds": duration,
+        "max_seq_length": MAX_SEQ_LENGTH,
+        "model": MODEL_NAME,
+        "iteration": iteration,
+        "hypothesis_sha": sha,
+        "duration_seconds": round(duration, 1),
     }
 
-    RESULTS_FILE.write_text(json.dumps(results, indent=2))
-    print(f"\nResults written to {RESULTS_FILE}")
-    print(f"val_loss={val_loss:.4f} | duration={duration:.1f}s")
+    RESULTS_FILE.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    print(f"\n[Orchestra] Results written to {RESULTS_FILE}")
+    print(f"[Orchestra] val_loss={val_loss:.4f} | duration={duration:.1f}s")
 
 
 if __name__ == "__main__":
