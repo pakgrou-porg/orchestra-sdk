@@ -10,7 +10,7 @@
 #
 # 2. Set environment variables:
 #       export SUPABASE_URL=https://<your-project>.supabase.co
-#       export SUPABASE_ANON_KEY=<your-anon-key>
+#       export SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>   # trusted backend (runtime + migrations)
 #       export OPENROUTER_API_KEY=<your-key>   # or set llm.provider below
 #
 # 3. Run migrations (first time only):
@@ -62,7 +62,8 @@ memory:
 
 supabase:
   url_env: "SUPABASE_URL"
-  key_env: "SUPABASE_ANON_KEY"
+  key_env: "SUPABASE_SERVICE_ROLE_KEY"   # trusted backend; anon key is read-only under hardened RLS
+  anon_key_env: "SUPABASE_ANON_KEY"
   session_table: "conductor_sessions"
   experiments_table: "conductor_experiments"
   memories_table: "conductor_memories"

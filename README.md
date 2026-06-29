@@ -128,8 +128,8 @@ cp deploy/.env.example .env
 | Variable | Required | Where to find it |
 |----------|----------|-----------------|
 | `SUPABASE_URL` | Yes | Supabase dashboard → Project Settings → API |
-| `SUPABASE_ANON_KEY` | Yes | Supabase dashboard → Project Settings → API |
-| `SUPABASE_SERVICE_ROLE_KEY` | Migrations only | Supabase dashboard → Project Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase dashboard → Project Settings → API — used by the trusted Conductor at runtime and for migrations (backend-only) |
+| `SUPABASE_ANON_KEY` | Optional | Supabase dashboard → Project Settings → API — read-only dashboard / runtime fallback only |
 | `OPENROUTER_API_KEY` | One LLM key required | [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `OPENAI_API_KEY` | One LLM key required | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | `ANTHROPIC_API_KEY` | One LLM key required | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
@@ -203,7 +203,7 @@ memory:
 
 supabase:
   url_env: "SUPABASE_URL"
-  key_env: "SUPABASE_ANON_KEY"
+  key_env: "SUPABASE_SERVICE_ROLE_KEY"   # trusted backend; anon key is read-only under hardened RLS
 ```
 
 See `examples/memory_scribe/conductor_config.yaml` and `examples/synthetic/conductor_config.yaml` for complete annotated examples.

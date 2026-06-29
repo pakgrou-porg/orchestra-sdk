@@ -120,10 +120,10 @@ def check_env_vars(env_file: Path | None) -> dict[str, str]:
 
     required = {
         "SUPABASE_URL": "Supabase project URL",
-        "SUPABASE_ANON_KEY": "Supabase anon (public) key",
+        "SUPABASE_SERVICE_ROLE_KEY": "Supabase service-role/secret key (Conductor runtime + migrations)",
     }
     optional = {
-        "SUPABASE_SERVICE_ROLE_KEY": "Supabase service role key (needed for migrations)",
+        "SUPABASE_ANON_KEY": "Supabase anon (public) key (read-only dashboard / fallback)",
         "OPENROUTER_API_KEY": "OpenRouter API key",
         "OPENAI_API_KEY": "OpenAI API key",
         "ANTHROPIC_API_KEY": "Anthropic API key",
@@ -143,10 +143,13 @@ def check_env_vars(env_file: Path | None) -> dict[str, str]:
 
 def check_supabase(env: dict[str, str]) -> None:
     url = os.environ.get("SUPABASE_URL", env.get("SUPABASE_URL", ""))
-    key = os.environ.get("SUPABASE_ANON_KEY", env.get("SUPABASE_ANON_KEY", ""))
+    key = (
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY", env.get("SUPABASE_SERVICE_ROLE_KEY", ""))
+        or os.environ.get("SUPABASE_ANON_KEY", env.get("SUPABASE_ANON_KEY", ""))
+    )
 
     if not url or not key:
-        record("Supabase reachable", False, "SUPABASE_URL or SUPABASE_ANON_KEY not set")
+        record("Supabase reachable", False, "SUPABASE_URL or a Supabase key not set")
         return
 
     # Ping the REST endpoint

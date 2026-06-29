@@ -41,7 +41,9 @@ memory:
 
 supabase:
   url_env: "SUPABASE_URL"
-  key_env: "SUPABASE_ANON_KEY"
+  # Trusted backend: use the service-role/secret key (anon key is read-only under hardened RLS).
+  key_env: "SUPABASE_SERVICE_ROLE_KEY"
+  anon_key_env: "SUPABASE_ANON_KEY"
   session_table: "conductor_sessions"
   experiments_table: "conductor_experiments"
   memories_table: "conductor_memories"

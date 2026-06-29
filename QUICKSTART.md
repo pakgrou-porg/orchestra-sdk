@@ -24,7 +24,10 @@ pip install -e .
 Run the migration to create the three Conductor tables in Supabase:
 
 ```bash
-orchestra migrate --supabase-url $SUPABASE_URL --supabase-key $SUPABASE_ANON_KEY
+# Migrations run DDL, so they require the service-role/secret key.
+export SUPABASE_URL=https://your-project.supabase.co
+export SUPABASE_SERVICE_ROLE_KEY=eyJ...
+orchestra migrate
 ```
 
 This creates:
@@ -58,7 +61,11 @@ Edit `conductor_config.yaml` and set:
 ```bash
 export OPENROUTER_API_KEY=sk-or-v1-...
 export SUPABASE_URL=https://your-project.supabase.co
-export SUPABASE_ANON_KEY=eyJ...
+# The Conductor is a trusted backend and uses the service-role/secret key at runtime.
+# Keep this key backend-only — never embed it in a browser/client app.
+export SUPABASE_SERVICE_ROLE_KEY=eyJ...
+# The anon key is optional (read-only dashboard / runtime fallback only):
+# export SUPABASE_ANON_KEY=eyJ...
 ```
 
 ---

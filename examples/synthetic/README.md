@@ -16,7 +16,8 @@ It is the recommended starting point for:
 pip install -e /path/to/orchestra-sdk
 
 export SUPABASE_URL=https://<your-project>.supabase.co
-export SUPABASE_ANON_KEY=<your-anon-key>
+# Trusted backend key, used by the Conductor at runtime and for migrations:
+export SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key>
 export OPENROUTER_API_KEY=<your-key>
 ```
 

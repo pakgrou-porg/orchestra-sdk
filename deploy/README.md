@@ -105,8 +105,8 @@ All secrets are stored in `.env` at the repository root. The file is excluded fr
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SUPABASE_URL` | **Yes** | Supabase project URL, e.g. `https://abc123.supabase.co` |
-| `SUPABASE_ANON_KEY` | **Yes** | Supabase anon (public) key — used by the Conductor at runtime |
-| `SUPABASE_SERVICE_ROLE_KEY` | Migrations only | Supabase service role key — used by `orchestra migrate` for DDL |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Supabase service-role/secret key — used by the trusted Conductor backend at runtime **and** by `orchestra migrate` for DDL. Keep it backend-only; never ship it to a browser/client. |
+| `SUPABASE_ANON_KEY` | Optional | Supabase anon (public) key — only used as a runtime fallback and by the read-only dashboard client. Under the hardened RLS model it grants public read but no writes. |
 | `OPENROUTER_API_KEY` | One LLM key required | OpenRouter key — access to Claude, GPT-4, Mistral, Llama, etc. |
 | `OPENAI_API_KEY` | One LLM key required | OpenAI direct key |
 | `ANTHROPIC_API_KEY` | One LLM key required | Anthropic direct key |
@@ -172,7 +172,8 @@ The setup wizard generates a starter config. The table below describes every fie
 | Field | Default | Description |
 |-------|---------|-------------|
 | `url_env` | `SUPABASE_URL` | Environment variable name for the project URL |
-| `key_env` | `SUPABASE_ANON_KEY` | Environment variable name for the anon key |
+| `key_env` | `SUPABASE_SERVICE_ROLE_KEY` | Env var name for the key the Conductor uses at runtime. Defaults to the service-role/secret key (trusted backend). |
+| `anon_key_env` | `SUPABASE_ANON_KEY` | Env var name for the public anon key used only as a runtime fallback. |
 
 ### `program`
 

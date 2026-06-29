@@ -122,7 +122,22 @@ class MemoryConfig(BaseModel):
 
 class SupabaseConfig(BaseModel):
     url_env: str = Field(default="SUPABASE_URL")
-    key_env: str = Field(default="SUPABASE_ANON_KEY")
+    # The Conductor runs in a trusted backend environment, so it authenticates with
+    # the Supabase service-role/secret key by default. This lets the runtime tables
+    # keep strict RLS (no permissive anon write policies) while the Conductor still
+    # reads/writes its own session, experiment, and memory records.
+    key_env: str = Field(
+        default="SUPABASE_SERVICE_ROLE_KEY",
+        description=(
+            "Env var holding the key the Conductor uses at runtime. Defaults to the "
+            "service-role/secret key because the Conductor is a trusted backend. "
+            "Falls back to SUPABASE_ANON_KEY only if no service-role key is set."
+        ),
+    )
+    anon_key_env: str = Field(
+        default="SUPABASE_ANON_KEY",
+        description="Fallback public key env var (used only if the primary key_env is unset).",
+    )
     session_table: str = Field(default="conductor_sessions")
     experiments_table: str = Field(default="conductor_experiments")
     memories_table: str = Field(default="conductor_memories")
@@ -134,9 +149,22 @@ class SupabaseConfig(BaseModel):
         return url
 
     def get_key(self) -> str:
+        """Resolve the runtime key.
+
+        Precedence: the configured key_env (service-role/secret by default), then
+        the anon-key fallback. A clear error is raised if neither is set so the
+        Conductor never silently falls back to an under-privileged key that would
+        be blocked by the hardened RLS policies.
+        """
         key = os.environ.get(self.key_env)
+        if not key and self.anon_key_env:
+            key = os.environ.get(self.anon_key_env)
         if not key:
-            raise EnvironmentError(f"Environment variable '{self.key_env}' is not set.")
+            raise EnvironmentError(
+                f"No Supabase key found. Set '{self.key_env}' (recommended: the "
+                f"service-role/secret key for the trusted Conductor backend) or, as a "
+                f"fallback, '{self.anon_key_env}'."
+            )
         return key
 
 

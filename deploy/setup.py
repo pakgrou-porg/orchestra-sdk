@@ -224,7 +224,7 @@ def collect_secrets(existing_env: dict[str, str]) -> dict[str, str]:
         secret=True,
     )
     secrets["SUPABASE_SERVICE_ROLE_KEY"] = ask(
-        "Supabase service role key (for migrations)",
+        "Supabase service role key (used by the trusted Conductor at runtime AND for migrations)",
         secrets.get("SUPABASE_SERVICE_ROLE_KEY", ""),
         secret=True,
     )
@@ -338,7 +338,10 @@ def write_conductor_config(secrets: dict[str, str], session_name: str) -> Path:
 
         supabase:
           url_env: "SUPABASE_URL"
-          key_env: "SUPABASE_ANON_KEY"
+          # Trusted backend: use the service-role/secret key so the DB can enforce
+          # strict RLS. Never expose this key in a browser/client app.
+          key_env: "SUPABASE_SERVICE_ROLE_KEY"
+          anon_key_env: "SUPABASE_ANON_KEY"
 
         program:
           path: "program.md"

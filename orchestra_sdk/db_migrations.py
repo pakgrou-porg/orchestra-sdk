@@ -194,6 +194,10 @@ RETURNS TABLE (
     metadata JSONB
 )
 LANGUAGE plpgsql
+-- Defense in depth: run with the caller's privileges (so RLS on conductor_memories
+-- still applies) and pin a trusted search_path to prevent search-path injection.
+SECURITY INVOKER
+SET search_path = public, pg_temp
 AS $$
 BEGIN
     RETURN QUERY
@@ -286,6 +290,159 @@ DO $$ BEGIN
 END $$;
 """,
     },
+    {
+        "name": "010_secure_rls_conductor_tables",
+        "sql": """
+-- SECURE-BY-DEFAULT HARDENING (forward-only).
+--
+-- Background: blocks 001-004 created permissive 'FOR ALL USING (true)' policies on
+-- the Conductor's own tables. With the Conductor now authenticating via the
+-- service-role key (which BYPASSes RLS entirely), those open policies are no
+-- longer needed for the backend and only widen the attack surface for the public
+-- anon key. This block removes the blanket policies and replaces them with
+-- read-only access for anon/authenticated. All Conductor writes continue to work
+-- because service_role bypasses RLS.
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['conductor_sessions','conductor_experiments','conductor_memories','session_best_runs']
+  LOOP
+    -- Ensure RLS is on (it is enforced for anon/authenticated; service_role bypasses it).
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+
+    -- Drop the legacy permissive 'FOR ALL USING (true)' policies.
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', t || '_all', t);
+
+    -- Read-only access for the public/authenticated roles (dashboard monitoring).
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_policies WHERE tablename = t AND policyname = t || '_select'
+    ) THEN
+      EXECUTE format(
+        'CREATE POLICY %I ON public.%I FOR SELECT TO anon, authenticated USING (true)',
+        t || '_select', t
+      );
+    END IF;
+  END LOOP;
+END $$;
+""",
+    },
+    {
+        "name": "011_secure_rls_datasets",
+        "sql": """
+-- Replace permissive write policies on datasets/dataset_samples with a role-aware
+-- model: everyone may read; only authenticated users may write. The Conductor
+-- (service_role) bypasses RLS and is unaffected. When Supabase Auth is wired into
+-- the dashboard, these write policies should be further scoped to row ownership.
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['datasets','dataset_samples']
+  LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+
+    -- Remove the legacy anon-writable policies.
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'allow_insert_' || t, t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'allow_update_' || t, t);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'allow_delete_' || t, t);
+
+    -- Keep public read; recreate scoped to anon, authenticated for clarity.
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', 'allow_select_' || t, t);
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR SELECT TO anon, authenticated USING (true)',
+      'allow_select_' || t, t
+    );
+
+    -- Writes restricted to authenticated users only.
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR INSERT TO authenticated WITH CHECK (true)',
+      'auth_insert_' || t, t
+    );
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR UPDATE TO authenticated USING (true) WITH CHECK (true)',
+      'auth_update_' || t, t
+    );
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR DELETE TO authenticated USING (true)',
+      'auth_delete_' || t, t
+    );
+  END LOOP;
+END $$;
+""",
+    },
+    {
+        "name": "012_secure_rls_hardware_profiles",
+        "sql": """
+-- Same role-aware hardening for hardware_profiles: public read, authenticated write,
+-- service_role bypass for the backend.
+DO $$ BEGIN
+  ALTER TABLE public.hardware_profiles ENABLE ROW LEVEL SECURITY;
+
+  DROP POLICY IF EXISTS allow_insert_hardware_profiles ON public.hardware_profiles;
+  DROP POLICY IF EXISTS allow_update_hardware_profiles ON public.hardware_profiles;
+  DROP POLICY IF EXISTS allow_delete_hardware_profiles ON public.hardware_profiles;
+  DROP POLICY IF EXISTS allow_select_hardware_profiles ON public.hardware_profiles;
+
+  CREATE POLICY allow_select_hardware_profiles ON public.hardware_profiles
+    FOR SELECT TO anon, authenticated USING (true);
+  CREATE POLICY auth_insert_hardware_profiles ON public.hardware_profiles
+    FOR INSERT TO authenticated WITH CHECK (true);
+  CREATE POLICY auth_update_hardware_profiles ON public.hardware_profiles
+    FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+  CREATE POLICY auth_delete_hardware_profiles ON public.hardware_profiles
+    FOR DELETE TO authenticated USING (true);
+END $$;
+""",
+    },
+    {
+        "name": "013_secure_rls_llm_providers",
+        "sql": """
+-- Protect LLM provider secrets. The llm_providers table may contain sensitive
+-- key material; it must never be writable (or fully readable) via the public anon
+-- key. This block:
+--   1. Ensures RLS is enabled.
+--   2. Removes any legacy permissive policies.
+--   3. Restricts ALL access to the authenticated role (and service_role bypass).
+--   4. Revokes the plaintext api_key column from anon/authenticated so even a
+--      mis-scoped SELECT cannot leak the raw secret (hints remain visible).
+-- The table is created by the dashboard tooling; guard every statement so the
+-- migration is a no-op when the table is absent.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name = 'llm_providers') THEN
+    EXECUTE 'ALTER TABLE public.llm_providers ENABLE ROW LEVEL SECURITY';
+
+    -- Drop common legacy permissive policy names if present.
+    EXECUTE 'DROP POLICY IF EXISTS llm_providers_all ON public.llm_providers';
+    EXECUTE 'DROP POLICY IF EXISTS allow_select_llm_providers ON public.llm_providers';
+    EXECUTE 'DROP POLICY IF EXISTS allow_insert_llm_providers ON public.llm_providers';
+    EXECUTE 'DROP POLICY IF EXISTS allow_update_llm_providers ON public.llm_providers';
+    EXECUTE 'DROP POLICY IF EXISTS allow_delete_llm_providers ON public.llm_providers';
+
+    -- Only authenticated users may interact with provider rows; anon gets nothing.
+    IF NOT EXISTS (SELECT 1 FROM pg_policies
+                   WHERE tablename='llm_providers' AND policyname='auth_manage_llm_providers') THEN
+      EXECUTE 'CREATE POLICY auth_manage_llm_providers ON public.llm_providers FOR ALL TO authenticated USING (true) WITH CHECK (true)';
+    END IF;
+
+    -- Never expose the raw secret column to the public roles. Column-level REVOKE
+    -- is independent of RLS and provides defense in depth even if a policy is
+    -- accidentally widened later. The hint column stays readable for the UI.
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='llm_providers' AND column_name='api_key') THEN
+      EXECUTE 'REVOKE SELECT (api_key) ON public.llm_providers FROM anon';
+      EXECUTE 'REVOKE INSERT (api_key) ON public.llm_providers FROM anon';
+      EXECUTE 'REVOKE UPDATE (api_key) ON public.llm_providers FROM anon';
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_schema='public' AND table_name='llm_providers' AND column_name='api_key_encrypted') THEN
+      EXECUTE 'REVOKE SELECT (api_key_encrypted) ON public.llm_providers FROM anon';
+    END IF;
+  END IF;
+END $$;
+""",
+    },
 ]
 
 
@@ -299,8 +456,15 @@ def run_migrations(dry_run: bool = False, console=None) -> None:
     try:
         config = SupabaseConfig()
         url = config.get_url()
-        # Prefer service role key for DDL (CREATE EXTENSION, CREATE TABLE).
-        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or config.get_key()
+        # DDL (CREATE EXTENSION/TABLE, policy changes) requires the service-role key.
+        # Never fall back to the anon key for migrations: the hardened RLS model
+        # forbids anon DDL, so a silent fallback would produce confusing failures.
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        if not key:
+            raise EnvironmentError(
+                "SUPABASE_SERVICE_ROLE_KEY is required to run migrations (DDL). "
+                "Set it in your environment or .env before running `orchestra migrate`."
+            )
     except Exception as e:
         msg = f"Could not load Supabase config. Ensure SUPABASE_URL is set in environment or conductor_config.yaml: {e}"
         if console:

@@ -52,7 +52,11 @@ memory:
 
 supabase:
   url_env: "SUPABASE_URL"
-  key_env: "SUPABASE_ANON_KEY"
+  # The Conductor is a trusted backend: use the service-role/secret key so the
+  # database can enforce strict RLS (the public anon key stays read-only).
+  # NEVER expose this key in any browser/client app.
+  key_env: "SUPABASE_SERVICE_ROLE_KEY"
+  anon_key_env: "SUPABASE_ANON_KEY"   # fallback only; not recommended for runtime
   session_table: "conductor_sessions"
   experiments_table: "conductor_experiments"
   memories_table: "conductor_memories"
